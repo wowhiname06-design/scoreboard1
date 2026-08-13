@@ -7,7 +7,39 @@ from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
-st.set_page_config(page_title="점수판 실시간 추적기", page_icon="📊", layout="wide")
+# 페이지 설정 (넓은 화면 사용)
+st.set_page_config(page_title="웹 점수판 실시간 추적기", page_icon="📊", layout="wide")
+
+# 커스텀 CSS로 전반적인 디자인을 평범하고 깔끔한 웹사이트처럼 다듬기
+st.markdown("""
+    <style>
+    .main { background-color: #f8f9fa; }
+    .stButton>button { width: 100%; border-radius: 6px; font-weight: bold; height: 40px; }
+    .result-card {
+        background-color: #ffffff;
+        border: 1px solid #e0e0e0;
+        border-left: 5px solid #4f46e5;
+        padding: 15px 20px;
+        margin-bottom: 10px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        font-size: 18px;
+        font-weight: 600;
+        color: #1f2937;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .diff-badge {
+        background-color: #eef2ff;
+        color: #4f46e5;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 15px;
+        font-weight: bold;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 if 'last_valid_parsed_list' not in st.session_state:
     st.session_state.last_valid_parsed_list = []
@@ -96,24 +128,35 @@ def parse_all_with_scroll(driver, calc_mode, exclude_ceo):
 
     return unique_people
 
-st.title("📊 웹 점수판 실시간 추적기")
+# 메인 UI 제목
+st.title("📊 웹 점수판 실시간 추적 대시보드")
+st.markdown("---")
 
-with st.sidebar:
-    st.header("⚙️ 설정 메뉴")
-    url = st.text_input("점수판 링크 URL", value="https://scoredev.flabs.kr/5snb08fSl5-WwQ")
-    calc_mode_str = st.radio("계산 기준 컬럼", ["💧 기여도 (6번째 열)", "⭐ 점수 (5번째 열)"])
-    calc_mode = "contrib" if "기여도" in calc_mode_str else "score"
-    diff_limit = st.number_input("점수 차이 기준 (점 이하)", value=50, step=5)
-    max_display = st.number_input("최대 표시 개수 (0은 제한 없음)", value=0, step=1)
-    interval = st.number_input("자동 갱신 주기 (초)", value=5, min_value=1, step=1)
-    exclude_ceo = st.checkbox("👑 '대표 / 사장' 항목 제외", value=True)
-    show_scores = st.checkbox("🏷️ 멤버 이름 옆 점수 표시", value=True)
-    font_size = st.slider("🔤 글씨 크기 조절", min_value=12, max_value=36, value=20)
-    is_bold = st.checkbox("🔤 글씨 굵게 (Bold)", value=True)
+# 상단 깔끔한 설정 영역 (접고 펼치기 가능)
+with st.expander("⚙️ 설정 및 필터 옵션 (클릭해서 열기/닫기)", expanded=True):
+    col_1, col_2, col_3 = st.columns(3)
+    
+    with col_1:
+        url = st.text_input("점수판 링크 URL", value="https://scoredev.flabs.kr/5snb08fSl5-WwQ")
+        calc_mode_str = st.radio("계산 기준 컬럼", ["💧 기여도 (6번째 열)", "⭐ 점수 (5번째 열)"])
+        calc_mode = "contrib" if "기여도" in calc_mode_str else "score"
+        
+    with col_2:
+        diff_limit = st.number_input("점수 차이 기준 (점 이하)", value=50, step=5)
+        max_display = st.number_input("최대 표시 개수 (0은 제한 없음)", value=0, step=1)
+        interval = st.number_input("자동 갱신 주기 (초)", value=5, min_value=1, step=1)
+        
+    with col_3:
+        st.write("### 예외 처리 및 표시 설정")
+        exclude_ceo = st.checkbox("👑 '대표 / 사장' 항목 제외", value=True)
+        show_scores = st.checkbox("🏷️ 멤버 이름 옆 점수 표시", value=True)
 
-    col1, col2 = st.columns(2)
-    with col1: start_btn = st.button("▶ 추적 시작", use_container_width=True)
-    with col2: stop_btn = st.button("⏹ 추적 중지", use_container_width=True)
+    st.markdown("")
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        start_btn = st.button("▶ 추적 시작", type="primary")
+    with c2:
+        stop_btn = st.button("⏹ 추적 중지")
 
 if start_btn:
     st.session_state.is_running = True
@@ -134,10 +177,10 @@ if stop_btn:
             pass
         st.session_state.driver = None
 
+st.markdown("### 📌 실시간 모니터링 결과")
 status_area = st.empty()
 result_area = st.empty()
 
-# 💡 st.rerun()을 쓰지 않고 st.empty와 st.fragment 기반 구조로 깜빡임 원천 차단
 @st.fragment(run_every=interval)
 def live_tracker():
     if st.session_state.is_running and st.session_state.driver:
@@ -169,34 +212,37 @@ def live_tracker():
                 total_count = len(parsed_list)
                 now_str = datetime.now().strftime("%H:%M:%S")
 
+                status_area.success(f"🟢 감시 중 (총 수집: {total_count}명 | 기준 {diff_limit}점 이하: {matched_count}건 감지됨 | 마지막 갱신: {now_str})")
+
                 output_items = diff_results[:max_display] if max_display > 0 else diff_results
-                displayed_count = len(output_items)
 
-                status_area.success(f"🟢 감시 중 (총 {total_count}명 수집 | {diff_limit}점 이하 {matched_count}건 중 {displayed_count}개 표시 | {now_str})")
+                cards_html = ""
+                if output_items:
+                    for item in output_items:
+                        if show_scores:
+                            p1_str = f"{item['p1']['name']} <span style='color: #6b7280; font-size: 15px;'>({item['p1']['score']:,.1f})</span>"
+                            p2_str = f"{item['p2']['name']} <span style='color: #6b7280; font-size: 15px;'>({item['p2']['score']:,.1f})</span>"
+                        else:
+                            p1_str = f"{item['p1']['name']}"
+                            p2_str = f"{item['p2']['name']}"
+                            
+                        cards_html += f"""
+                        <div class="result-card">
+                            <div>👤 {p1_str} &nbsp; ➔ &nbsp; 👤 {p2_str}</div>
+                            <div class="diff-badge">⚡ {item['diff']}점 차이</div>
+                        </div>
+                        """
+                else:
+                    cards_html = """
+                    <div style="padding: 20px; background-color: #ffffff; border-radius: 8px; text-align: center; color: #6b7280; border: 1px solid #e0e0e0;">
+                        현재 설정된 조건에 맞는 점수 차이 구간이 없습니다.
+                    </div>
+                    """
 
-                lines = []
-                for item in output_items:
-                    if show_scores:
-                        p1_str = f"{item['p1']['name']}({item['p1']['score']:,.1f})"
-                        p2_str = f"{item['p2']['name']}({item['p2']['score']:,.1f})"
-                    else:
-                        p1_str = f"{item['p1']['name']}"
-                        p2_str = f"{item['p2']['name']}"
-                    lines.append(f"• {p1_str} - {p2_str} ➔ {item['diff']}점 차이")
-
-                if not diff_results:
-                    lines.append("• 현재 설정된 조건에 맞는 점수 차이 구간이 없습니다.")
-
-                font_weight = "bold" if is_bold else "normal"
-                custom_css = f"""
-                <div style="font-size: {font_size}px; font-weight: {font_weight}; line-height: 1.6; background-color: #1e1e1e; color: #ffffff; padding: 15px; border-radius: 10px;">
-                    {"<br>".join(lines)}
-                </div>
-                """
-                result_area.markdown(custom_css, unsafe_allow_html=True)
+                result_area.markdown(cards_html, unsafe_allow_html=True)
         except Exception as e:
             status_area.warning(f"⚠️ 데이터 갱신 중... ({e})")
     else:
-        status_area.info("🔵 대기 중... 사이드바 메뉴에서 '▶ 추적 시작' 버튼을 누르세요.")
+        status_area.info("🔵 대기 중입니다. 상단 설정 메뉴에서 **[▶ 추적 시작]** 버튼을 눌러주세요.")
 
 live_tracker()
