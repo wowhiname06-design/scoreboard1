@@ -90,9 +90,9 @@ def parse_all_with_scroll(driver, calc_mode, exclude_ceo):
     unique_people = []
     seen = set()
     for p in people:
-      if p['name'] not in seen:
-          seen.add(p['name'])
-          unique_people.append(p)
+        if p['name'] not in seen:
+            seen.add(p['name'])
+            unique_people.append(p)
 
     return unique_people
 
@@ -118,74 +118,85 @@ with st.sidebar:
 if start_btn:
     st.session_state.is_running = True
     if st.session_state.driver is None:
-        st.session_state.driver = get_driver()
-        st.session_state.driver.get(url)
+        try:
+            st.session_state.driver = get_driver()
+            st.session_state.driver.get(url)
+        except Exception as e:
+            st.error(f"브라우저 실행 오류: {e}")
+            st.session_state.is_running = False
 
 if stop_btn:
     st.session_state.is_running = False
     if st.session_state.driver:
-        st.session_state.driver.quit()
+        try:
+            st.session_state.driver.quit()
+        except:
+            pass
         st.session_state.driver = None
 
 status_area = st.empty()
 result_area = st.empty()
 
-if st.session_state.is_running and st.session_state.driver:
-    parsed_list = parse_all_with_scroll(st.session_state.driver, calc_mode, exclude_ceo)
+# 💡 st.rerun()을 쓰지 않고 st.empty와 st.fragment 기반 구조로 깜빡임 원천 차단
+@st.fragment(run_every=interval)
+def live_tracker():
+    if st.session_state.is_running and st.session_state.driver:
+        try:
+            parsed_list = parse_all_with_scroll(st.session_state.driver, calc_mode, exclude_ceo)
 
-    if not parsed_list or len(parsed_list) < 12:
-        if st.session_state.last_valid_parsed_list:
-            parsed_list = st.session_state.last_valid_parsed_list
+            if not parsed_list or len(parsed_list) < 12:
+                if st.session_state.last_valid_parsed_list:
+                    parsed_list = st.session_state.last_valid_parsed_list
+            else:
+                st.session_state.last_valid_parsed_list = parsed_list
+
+            if parsed_list:
+                parsed_list.sort(key=lambda x: x['score'], reverse=True)
+                diff_results = []
+                for i in range(len(parsed_list) - 1):
+                    p1 = parsed_list[i]
+                    p2 = parsed_list[i + 1]
+                    diff_exact = p1['score'] - p2['score']
+                    if diff_exact.is_integer():
+                        diff = int(diff_exact) + 1
+                    else:
+                        diff = math.ceil(diff_exact)
+
+                    if diff <= diff_limit:
+                        diff_results.append({'p1': p1, 'p2': p2, 'diff': diff})
+
+                matched_count = len(diff_results)
+                total_count = len(parsed_list)
+                now_str = datetime.now().strftime("%H:%M:%S")
+
+                output_items = diff_results[:max_display] if max_display > 0 else diff_results
+                displayed_count = len(output_items)
+
+                status_area.success(f"🟢 감시 중 (총 {total_count}명 수집 | {diff_limit}점 이하 {matched_count}건 중 {displayed_count}개 표시 | {now_str})")
+
+                lines = []
+                for item in output_items:
+                    if show_scores:
+                        p1_str = f"{item['p1']['name']}({item['p1']['score']:,.1f})"
+                        p2_str = f"{item['p2']['name']}({item['p2']['score']:,.1f})"
+                    else:
+                        p1_str = f"{item['p1']['name']}"
+                        p2_str = f"{item['p2']['name']}"
+                    lines.append(f"• {p1_str} - {p2_str} ➔ {item['diff']}점 차이")
+
+                if not diff_results:
+                    lines.append("• 현재 설정된 조건에 맞는 점수 차이 구간이 없습니다.")
+
+                font_weight = "bold" if is_bold else "normal"
+                custom_css = f"""
+                <div style="font-size: {font_size}px; font-weight: {font_weight}; line-height: 1.6; background-color: #1e1e1e; color: #ffffff; padding: 15px; border-radius: 10px;">
+                    {"<br>".join(lines)}
+                </div>
+                """
+                result_area.markdown(custom_css, unsafe_allow_html=True)
+        except Exception as e:
+            status_area.warning(f"⚠️ 데이터 갱신 중... ({e})")
     else:
-        st.session_state.last_valid_parsed_list = parsed_list
+        status_area.info("🔵 대기 중... 사이드바 메뉴에서 '▶ 추적 시작' 버튼을 누르세요.")
 
-    if parsed_list:
-        parsed_list.sort(key=lambda x: x['score'], reverse=True)
-        diff_results = []
-        for i in range(len(parsed_list) - 1):
-            p1 = parsed_list[i]
-            p2 = parsed_list[i + 1]
-            diff_exact = p1['score'] - p2['score']
-            if diff_exact.is_integer():
-                diff = int(diff_exact) + 1
-            else:
-                diff = math.ceil(diff_exact)
-
-            if diff <= diff_limit:
-                diff_results.append({'p1': p1, 'p2': p2, 'diff': diff})
-
-        matched_count = len(diff_results)
-        total_count = len(parsed_list)
-        now_str = datetime.now().strftime("%H:%M:%S")
-
-        output_items = diff_results[:max_display] if max_display > 0 else diff_results
-        displayed_count = len(output_items)
-
-        status_area.success(f"🟢 감시 중 (총 {total_count}명 수집 | {diff_limit}점 이하 {matched_count}건 중 {displayed_count}개 표시 | {now_str})")
-
-        lines = []
-        for item in output_items:
-            if show_scores:
-                p1_str = f"{item['p1']['name']}({item['p1']['score']:,.1f})"
-                p2_str = f"{item['p2']['name']}({item['p2']['score']:,.1f})"
-            else:
-                p1_str = f"{item['p1']['name']}"
-                p2_str = f"{item['p2']['name']}"
-            lines.append(f"• {p1_str} - {p2_str} ➔ {item['diff']}점 차이")
-
-        if not diff_results:
-            lines.append("• 현재 설정된 조건에 맞는 점수 차이 구간이 없습니다.")
-
-        font_weight = "bold" if is_bold else "normal"
-        custom_css = f"""
-        <div style="font-size: {font_size}px; font-weight: {font_weight}; line-height: 1.6; background-color: #1e1e1e; color: #ffffff; padding: 15px; border-radius: 10px;">
-            {"<br>".join(lines)}
-        </div>
-        """
-        result_area.markdown(custom_css, unsafe_allow_html=True)
-
-    time.sleep(interval)
-    st.rerun()
-
-else:
-    status_area.info("🔵 대기 중... 사이드바 메뉴에서 '▶ 추적 시작' 버튼을 누르세요.")
+live_tracker()
