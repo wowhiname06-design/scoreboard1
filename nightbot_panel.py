@@ -6,6 +6,8 @@ from pathlib import Path
 
 import requests
 import streamlit as st
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
 
 COMMANDS_FILE = Path(__file__).with_name("commands.json")
@@ -77,40 +79,28 @@ def _video_id(value):
     return value if re.fullmatch(r"[\w-]{11}", value) else ""
 
 
-def _get_live_chat_id(api_key, video_id):
-    response = requests.get(
-        "https://www.googleapis.com/youtube/v3/videos",
-        params={"part": "liveStreamingDetails", "id": video_id, "key": api_key},
-        timeout=10,
-    )
-    response.raise_for_status()
-    items = response.json().get("items", [])
-    if not items:
-        raise ValueError("유튜브 영상을 찾을 수 없습니다.")
-    chat_id = items[0].get("liveStreamingDetails", {}).get("activeLiveChatId")
-    if not chat_id:
-        raise ValueError("현재 진행 중인 라이브 채팅이 없습니다.")
-    return chat_id
+def _youtube_driver(video_id):
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--window-size=900,1200")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--mute-audio")
+    driver = webdriver.Chrome(options=options)
+    driver.get(f"https://www.youtube.com/live_chat?v={video_id}&is_popout=1")
+    return driver
 
 
-def _poll_chat(api_key, live_chat_id):
-    params = {
-        "part": "snippet,authorDetails",
-        "liveChatId": live_chat_id,
-        "key": api_key,
-        "maxResults": 200,
-    }
-    if st.session_state.get("yt_page_token"):
-        params["pageToken"] = st.session_state.yt_page_token
-    response = requests.get(
-        "https://www.googleapis.com/youtube/v3/liveChat/messages",
-        params=params,
-        timeout=10,
-    )
-    response.raise_for_status()
-    data = response.json()
-    st.session_state.yt_page_token = data.get("nextPageToken")
-    return data.get("items", [])
+def _poll_chat(driver):
+    return driver.execute_script("""
+        return Array.from(document.querySelectorAll('yt-live-chat-text-message-renderer'))
+          .slice(-100).map((row, index) => ({
+            id: row.id || `${Date.now()}-${index}-${row.innerText}`,
+            author: (row.querySelector('#author-name')?.innerText || '시청자').trim(),
+            message: (row.querySelector('#message')?.innerText || '').trim()
+          })).filter(item => item.message);
+    """)
 
 
 def _command_editor():
@@ -157,11 +147,9 @@ def render_nightbot_panel():
     st.caption("유튜브 채팅에 등록된 명령어가 입력되면 아래 화면에 저장된 내용이 표시됩니다.")
     _command_editor()
 
-    default_api_key = _secret("YOUTUBE_API_KEY")
     col1, col2 = st.columns([3, 1])
     with col1:
         live_url = st.text_input("유튜브 라이브 주소", placeholder="https://www.youtube.com/watch?v=...")
-        api_key = default_api_key or st.text_input("YouTube API 키", type="password")
     with col2:
         st.write("")
         st.write("")
@@ -170,15 +158,18 @@ def render_nightbot_panel():
 
     if start:
         video_id = _video_id(live_url)
-        if not api_key:
-            st.error("YouTube API 키를 입력해주세요.")
-        elif not video_id:
+        if not video_id:
             st.error("올바른 유튜브 라이브 주소를 입력해주세요.")
         else:
             try:
-                st.session_state.yt_live_chat_id = _get_live_chat_id(api_key, video_id)
-                st.session_state.yt_api_key = api_key
-                st.session_state.yt_page_token = None
+                old_driver = st.session_state.get("yt_driver")
+                if old_driver:
+                    try:
+                        old_driver.quit()
+                    except Exception:
+                        pass
+                st.session_state.yt_driver = _youtube_driver(video_id)
+                st.session_state.yt_seen_ids = set()
                 st.session_state.yt_skip_first_batch = True
                 st.session_state.yt_watching = True
                 st.success("라이브 채팅 감시를 시작했습니다.")
@@ -186,6 +177,12 @@ def render_nightbot_panel():
                 st.error(str(exc))
     if stop:
         st.session_state.yt_watching = False
+        driver = st.session_state.pop("yt_driver", None)
+        if driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
 
     status = st.empty()
     output = st.empty()
@@ -196,21 +193,22 @@ def render_nightbot_panel():
             status.info("라이브 주소를 넣고 채팅 감시 시작을 눌러주세요.")
             return
         try:
-            messages = _poll_chat(
-                st.session_state.yt_api_key,
-                st.session_state.yt_live_chat_id,
-            )
+            messages = _poll_chat(st.session_state.yt_driver)
             commands = _load_commands()
             if st.session_state.pop("yt_skip_first_batch", False):
+                st.session_state.yt_seen_ids.update(item["id"] for item in messages)
                 messages = []
             for item in messages:
-                text = item.get("snippet", {}).get("displayMessage", "").strip()
+                if item["id"] in st.session_state.yt_seen_ids:
+                    continue
+                st.session_state.yt_seen_ids.add(item["id"])
+                text = item.get("message", "").strip()
                 command = _normalise_command(text)
                 if command in commands:
                     st.session_state.yt_last_match = {
                         "command": command,
                         "content": commands[command],
-                        "author": item.get("authorDetails", {}).get("displayName", "시청자"),
+                        "author": item.get("author", "시청자"),
                         "time": datetime.now().strftime("%H:%M:%S"),
                     }
             status.success(f"🟢 채팅 감시 중 · 마지막 확인 {datetime.now().strftime('%H:%M:%S')}")
