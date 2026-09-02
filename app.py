@@ -246,3 +246,8 @@ def live_tracker():
         status_area.info("🔵 대기 중입니다. 상단 설정 메뉴에서 **[▶ 추적 시작]** 버튼을 눌러주세요.")
 
 live_tracker()
+
+
+from nightbot_panel import render_nightbot_panel
+
+render_nightbot_panel()
